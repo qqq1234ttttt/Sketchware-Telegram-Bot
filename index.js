@@ -31,7 +31,7 @@ app.post('/api/add-bot', async (req, res) => {
   }
 });
 
-// 2. Command နှင့် Inline Button အသစ် သိမ်းဆည်းမည့် API
+// 2. Command နှင့် User ထည့်မည့် Button များကို သိမ်းဆည်းမည့် API
 app.post('/api/add-command', async (req, res) => {
   try {
     const { bot_token, command, reply_text, button_text, button_url } = req.body;
@@ -94,7 +94,25 @@ app.get('/api/get-bots', async (req, res) => {
   }
 });
 
-// 5. Telegram Webhook (Telegram ထဲမှ User စာပို့လာပါက ဤနေရာသို့ ဝင်ရောက်မည်)
+// 5. Command တစ်ခုချင်းစီကို id ဖြင့် ဖျက်ရန် Delete API
+app.delete('/api/delete-command', async (req, res) => {
+    try {
+        const commandId = req.query.id;
+        
+        const { error } = await supabase
+            .from('bot_commands')
+            .delete()
+            .eq('id', commandId);
+
+        if (error) throw error;
+
+        res.status(200).json({ success: true, message: "Command deleted successfully" });
+    } catch (err) {
+        res.status(400).json({ success: false, error: err.message });
+    }
+});
+
+// 6. Telegram Webhook (User က App ထဲမှာ သတ်မှတ်ထားသော Command နှင့် Button များအတိုင်း တိုက်ရိုက် ပေါ်စေရန်)
 app.post('/api/webhook/:bot_token', async (req, res) => {
   try {
     const botToken = req.params.bot_token;
@@ -114,14 +132,14 @@ app.post('/api/webhook/:bot_token', async (req, res) => {
       if (!error && commands && commands.length > 0) {
         const cmdData = commands[0];
 
-        // Telegram သို့ ပြန်မည့် Payload တည်ဆောက်ခြင်း
+        // Telegram သို့ ပြန်မည့် Payload (Reply စာသား)
         const payload = {
           chat_id: chatId,
           text: cmdData.reply_text
         };
 
-        // အကယ်၍ Inline Button ထည့်ထားခဲ့လျှင် တွဲ၍ ပို့မည်
-        if (cmdData.button_text && cmdData.button_url) {
+        // **အဓိကပြင်ဆင်ချက်:** User ကိုယ်တိုင် App ထဲမှာ ထည့်ထားခဲ့သည့် Button နာမည်နှင့် Link (URL) အတိုင်းသာ ပေါ်စေခြင်း
+        if (cmdData.button_text && cmdData.button_text.trim() !== "" && cmdData.button_url && cmdData.button_url.trim() !== "") {
           payload.reply_markup = {
             inline_keyboard: [
               [
