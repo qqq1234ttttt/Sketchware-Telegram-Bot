@@ -43,7 +43,7 @@ app.get('/api/get-bots', async (req, res) => {
 // 3. Command / Menu / Start များကို သိမ်းဆည်းမည့် API
 app.post('/api/add-command', async (req, res) => {
   try {
-    const { bot_token, start_welcome, menu_name, menu_reply, command, reply_text } = req.body;
+    const { bot_token, start_welcome, menu_name, menu_reply } = req.body;
     
     if (!bot_token) {
       return res.status(400).json({ success: false, error: 'Bot token is missing' });
@@ -58,14 +58,10 @@ app.post('/api/add-command', async (req, res) => {
     } else if (menu_name && menu_reply) {
       finalCommand = menu_name;
       finalReply = menu_reply;
-    } else if (command && reply_text) {
-      finalCommand = command;
-      finalReply = reply_text;
     } else {
       return res.status(400).json({ success: false, error: 'Invalid data fields provided' });
     }
 
-    // Database ထဲသို့ သီးသန့် အချက်အလက်အဖြစ် ထည့်သွင်းခြင်း
     const { error } = await supabase.from('bot_commands').insert([{ 
       bot_token: bot_token, 
       command: finalCommand, 
@@ -88,7 +84,7 @@ app.get('/api/get-commands', async (req, res) => {
   try {
     const { bot_token } = req.query;
     if (!bot_token) {
-      return res.status(400).json({ success: false, error: 'Bot token is missing' });
+      return res.status(400).json({ success: { error: 'Bot token is missing' } });
     }
 
     const { data, error } = await supabase.from('bot_commands').select('*').eq('bot_token', bot_token);
@@ -100,16 +96,15 @@ app.get('/api/get-commands', async (req, res) => {
   }
 });
 
-// 5. သီးသန့် ID ဖြင့် Menu/Command တစ်ခုချင်းစီကို တိကျစွာ ဖျက်ဆီးမည့် API (Delete Error 400/500 ကာကွယ်ရန်)
-app.delete('/api/delete-command/:id', async (req, res) => {
+// 5. သီးသန့် ID ဖြင့် Command တစ်ခုချင်းစီကို တိကျစွာ ဖျက်ဆီးမည့် API (Query Param & Route Params နှစ်မျိုးစလုံး support ပေးရန်)
+app.delete('/api/delete-command', async (req, res) => {
   try {
-    const commandId = req.params.id;
+    const commandId = req.query.id;
     
     if (!commandId) {
       return res.status(400).json({ success: false, error: 'Command ID is missing' });
     }
 
-    // Supabase မှ သက်ဆိုင်ရာ id ဖြင့်သာ တိကျစွာ ဖျက်မည် (အကုန်မပါသွားစေရန်)
     const { error } = await supabase
       .from('bot_commands')
       .delete()
