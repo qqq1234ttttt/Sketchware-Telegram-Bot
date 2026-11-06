@@ -40,7 +40,7 @@ app.get('/api/get-bots', async (req, res) => {
   }
 });
 
-// 3. Command / Menu / Start များကို သိမ်းဆည်းမည့် API
+// 3. Command / Menu / Start များကို သိမ်းဆည်းမည့် API (App ဘက်မှ ပို့လာသော ပုံစံအတိုင်း တိကျစွာ လက်ခံမည်)
 app.post('/api/add-command', async (req, res) => {
   try {
     const { bot_token, start_welcome, menu_name, menu_reply } = req.body;
@@ -49,30 +49,57 @@ app.post('/api/add-command', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Bot token is missing' });
     }
 
-    let finalCommand = "";
-    let finalReply = "";
+    const token = bot_token.trim();
 
+    // အကယ်၍ /start (Welcome Message) ထည့်သွင်းလာပါက သိမ်းဆည်းမည် (သို့မဟုတ် Update လုပ်မည်)
     if (start_welcome && start_welcome.trim() !== "") {
-      finalCommand = "/start";
-      finalReply = start_welcome.trim();
-    } else if (menu_name && menu_reply) {
-      finalCommand = menu_name.trim();
-      finalReply = menu_reply.trim();
-    } else {
-      return res.status(400).json({ success: false, error: 'Invalid data fields provided' });
+      // ရှိပြီးသား /start ကို ရှာမည်
+      const { data: existingStart } = await supabase
+        .from('bot_commands')
+        .select('id')
+        .eq('bot_token', token)
+        .eq('command', '/start')
+        .maybeSingle();
+
+      if (existingStart) {
+        await supabase.from('bot_commands').update({ reply_text: start_welcome.trim() }).eq('id', existingStart.id);
+      } else {
+        await supabase.from('bot_commands').insert([{
+          bot_token: token,
+          command: '/start',
+          reply_text: start_welcome.trim(),
+          button_text: '',
+          button_url: '',
+          menu_keyboard: ''
+        }]);
+      }
     }
 
-    // Supabase သို့ ဒေတာအသစ် ထည့်သွင်းခြင်း
-    const { error } = await supabase.from('bot_commands').insert([{ 
-      bot_token: bot_token.trim(), 
-      command: finalCommand, 
-      reply_text: finalReply,
-      button_text: "", 
-      button_url: "",
-      menu_keyboard: "" 
-    }]);
+    // အကယ်၍ Menu အသစ် (Menu Name & Reply) ထည့်သွင်းလာပါက သိမ်းဆည်းမည်
+    if (menu_name && menu_name.trim() !== "" && menu_reply && menu_reply.trim() !== "") {
+      const mName = menu_name.trim();
+      const mReply = menu_reply.trim();
 
-    if (error) throw error;
+      const { data: existingMenu } = await supabase
+        .from('bot_commands')
+        .select('id')
+        .eq('bot_token', token)
+        .eq('command', mName)
+        .maybeSingle();
+
+      if (existingMenu) {
+        await supabase.from('bot_commands').update({ reply_text: mReply }).eq('id', existingMenu.id);
+      } else {
+        await supabase.from('bot_commands').insert([{
+          bot_token: token,
+          command: mName,
+          reply_text: mReply,
+          button_text: '',
+          button_url: '',
+          menu_keyboard: ''
+        }]);
+      }
+    }
 
     res.json({ success: true, message: 'Saved successfully!' });
   } catch (err) {
@@ -119,7 +146,7 @@ app.delete('/api/delete-command', async (req, res) => {
   }
 });
 
-// 6. Telegram Webhook (Menu Bar အောက်ခြေမှာ မဖြစ်မနေ ပေါ်စေရန် အဓိကပြင်ဆင်ထားသော Webhook)
+// 6. Telegram Webhook (Menu Bar အောက်ခြေမှာ မဖြစ်မနေ ပေါ်စေရန် အာမခံသော Webhook)
 app.post('/api/webhook/:bot_token', async (req, res) => {
   try {
     const botToken = req.params.bot_token;
@@ -144,7 +171,6 @@ app.post('/api/webhook/:bot_token', async (req, res) => {
         if (matchedCmd && matchedCmd.reply_text) {
           replyText = matchedCmd.reply_text;
         } else {
-          // အကယ်၍ တိုက်ရိုက်မတွေ့ပါက /start ၏ reply ကို ရှာမည်
           const startCmd = allCommands.find(c => c.command && c.command.trim() === "/start");
           if (startCmd && startCmd.reply_text) {
             replyText = startCmd.reply_text;
@@ -156,13 +182,12 @@ app.post('/api/webhook/:bot_token', async (req, res) => {
           text: replyText
         };
 
-        // Database ထဲတွင်ရှိသော /start မဟုတ်သည့် အခြား Command အားလုံးကို အောက်ခြေ Menu Bar (Keyboard) ခလုတ်များအဖြစ် ဖန်တီးမည်
+        // Database ထဲတွင်ရှိသော /start မဟုတ်သည့် အခြား Menu ခလုတ်အားလုံးကို အောက်ခြေ Keyboard အဖြစ် တည်ဆောက်မည်
         const menuButtons = [];
         let currentRow = [];
 
         allCommands.forEach(c => {
           if (c.command && c.command.trim() !== "/start") {
-            // ထပ်နေသော Button နာမည်များ မပါလာအောင် စစ်ဆေးခြင်း
             const btnName = c.command.trim();
             const exists = menuButtons.some(row => row.some(b => b.text === btnName));
             if (!exists) {
@@ -179,7 +204,7 @@ app.post('/api/webhook/:bot_token', async (req, res) => {
           menuButtons.push(currentRow);
         }
 
-        // Menu ခလုတ်များ ရှိနေပါက အောက်ခြေ Keyboard တွင် ထည့်သွင်းမည်
+        // မည်သည့်စာသား ပို့သည်ဖြစ်စေ အောက်ခြေတွင် Menu Bar အမြဲပေါ်နေစေရန် ထည့်သွင်းမည်
         if (menuButtons.length > 0) {
           replyPayload.reply_markup = {
             keyboard: menuButtons,
@@ -188,7 +213,6 @@ app.post('/api/webhook/:bot_token', async (req, res) => {
           };
         }
 
-        // Telegram သို့ API ဖြင့် မက်ဆေ့ခ်ျနှင့် Keyboard ပို့မည်
         await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, replyPayload);
       }
     }
