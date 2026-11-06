@@ -11,7 +11,9 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 app.post('/api/add-bot', async (req, res) => {
   try {
     const { user_id, bot_name, bot_token } = req.body;
-    if (!user_id || !bot_token) return res.status(400).json({ success: false, error: 'Missing fields' });
+    if (!user_id || !bot_token) {
+      return res.status(400).json({ success: false, error: 'Missing fields: user_id or bot_token' });
+    }
 
     const { error } = await supabase.from('bots').insert([{ user_id, bot_name, bot_token }]);
     if (error) throw error;
@@ -22,7 +24,26 @@ app.post('/api/add-bot', async (req, res) => {
   }
 });
 
-// 2. Command / Menu / Start များကို သိမ်းဆည်းမည့် API (Error 400 ကာကွယ်ရန် Fields အားလုံးကို Handle လုပ်ပေးထားသည်)
+// 2. Bot စာရင်းများ ထုတ်ယူမည့် API (MainActivity အတွက် အရေးကြီးသည် - မူလက မပါဝင်ပါ)
+app.get('/api/get-bots', async (req, res) => {
+  try {
+    const { user_id } = req.query;
+    
+    let query = supabase.from('bots').select('*');
+    if (user_id && user_id !== "default_user") {
+      query = query.eq('user_id', user_id);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    res.json({ success: true, bots: data });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 3. Command / Menu / Start များကို သိမ်းဆည်းမည့် API (Error 400 ကာကွယ်ရန်)
 app.post('/api/add-command', async (req, res) => {
   try {
     const { bot_token, start_welcome, menu_name, menu_reply, command, reply_text } = req.body;
@@ -31,10 +52,10 @@ app.post('/api/add-command', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Bot token is missing' });
     }
 
-    // App ဘက်က ပို့လာသည့် ပုံစံအမျိုးမျိုးကို စစ်ဆေး၍ Database ထဲသို့ ထည့်ခြင်း
     let finalCommand = "";
     let finalReply = "";
 
+    // /start သီးသန့် (သို့) Menu သီးသန့် ခွဲခြားလက်ခံခြင်း
     if (start_welcome && start_welcome.trim() !== "") {
       finalCommand = "/start";
       finalReply = start_welcome;
@@ -48,7 +69,7 @@ app.post('/api/add-command', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Invalid data fields provided' });
     }
 
-    // Supabase table ထဲသို့ ထည့်သွင်းခြင်း (command နှင့် reply_text ကော်လံများဖြင့် သိမ်းမည်)
+    // Supabase table ('bot_commands') ထဲသို့ ထည့်သွင်းခြင်း
     const { error } = await supabase.from('bot_commands').insert([{ 
       bot_token: bot_token, 
       command: finalCommand, 
@@ -66,19 +87,24 @@ app.post('/api/add-command', async (req, res) => {
   }
 });
 
-// 3. Command စာရင်းများ ထုတ်ယူမည့် API (GET)
+// 4. Command စာရင်းများ ထုတ်ယူမည့် API (GET)
 app.get('/api/get-commands', async (req, res) => {
   try {
     const { bot_token } = req.query;
+    if (!bot_token) {
+      return res.status(400).json({ success: false, error: 'Bot token is missing' });
+    }
+
     const { data, error } = await supabase.from('bot_commands').select('*').eq('bot_token', bot_token);
     if (error) throw error;
+    
     res.json({ success: true, commands: data });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 4. Telegram Webhook
+// 5. Telegram Webhook (Persistent Menu / Start စနစ်အတွက်)
 app.post('/api/webhook/:bot_token', async (req, res) => {
   try {
     const botToken = req.params.bot_token;
@@ -88,7 +114,7 @@ app.post('/api/webhook/:bot_token', async (req, res) => {
       const chatId = update.message.chat.id;
       const userText = update.message.text.trim();
 
-      // User ရိုက်လိုက်သော စာသားနှင့် တိုက်ဆိုင်သော command ကို Database ထဲတွင် ရှာမည်
+      // User ရိုက်လိုက်သော (သို့) နှိပ်လိုက်သော စာသားနှင့် တိုက်ဆိုင်သော command/menu ကို ရှာမည်
       const { data: commands, error } = await supabase
         .from('bot_commands')
         .select('*')
