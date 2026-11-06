@@ -40,7 +40,7 @@ app.get('/api/get-bots', async (req, res) => {
   }
 });
 
-// 3. Command / Menu / Start များကို သိမ်းဆည်းမည့် API
+// 3. Command / Menu / Start များကို သိမ်းဆည်းမည့် API (Space များကို .trim() ဖြင့် ဖြတ်ပေးမည်)
 app.post('/api/add-command', async (req, res) => {
   try {
     const { bot_token, start_welcome, menu_name, menu_reply } = req.body;
@@ -54,16 +54,16 @@ app.post('/api/add-command', async (req, res) => {
 
     if (start_welcome && start_welcome.trim() !== "") {
       finalCommand = "/start";
-      finalReply = start_welcome;
+      finalReply = start_welcome.trim();
     } else if (menu_name && menu_reply) {
-      finalCommand = menu_name;
-      finalReply = menu_reply;
+      finalCommand = menu_name.trim();
+      finalReply = menu_reply.trim();
     } else {
       return res.status(400).json({ success: false, error: 'Invalid data fields provided' });
     }
 
     const { error } = await supabase.from('bot_commands').insert([{ 
-      bot_token: bot_token, 
+      bot_token: bot_token.trim(), 
       command: finalCommand, 
       reply_text: finalReply,
       button_text: "", 
@@ -96,7 +96,7 @@ app.get('/api/get-commands', async (req, res) => {
   }
 });
 
-// 5. သီးသန့် ID ဖြင့် Command တစ်ခုချင်းစီကို တိကျစွာ ဖျက်ဆီးမည့် API (Query Param & Route Params နှစ်မျိုးစလုံး support ပေးရန်)
+// 5. သီးသန့် ID ဖြင့် Command တစ်ခုချင်းစီကို တိကျစွာ ဖျက်ဆီးမည့် API
 app.delete('/api/delete-command', async (req, res) => {
   try {
     const commandId = req.query.id;
@@ -134,7 +134,8 @@ app.post('/api/webhook/:bot_token', async (req, res) => {
         .eq('bot_token', botToken);
 
       if (!fetchError && allCommands) {
-        const matchedCmd = allCommands.find(c => c.command === userText);
+        // Space ပါသွားသည်ကို ကာကွယ်ရန် .trim() ဖြင့် တိုက်စစ်မည်
+        const matchedCmd = allCommands.find(c => c.command && c.command.trim().toLowerCase() === userText.toLowerCase());
 
         if (matchedCmd) {
           let replyPayload = {
@@ -142,18 +143,17 @@ app.post('/api/webhook/:bot_token', async (req, res) => {
             text: matchedCmd.reply_text
           };
 
-          if (userText === "/start") {
-            const menuButtons = allCommands
-              .filter(c => c.command !== "/start")
-              .map(c => [{ text: c.command }]);
+          // User က /start ပို့လျှင် သို့မဟုတ် Menu ထဲက ခလုတ်တစ်ခုခုကို နှိပ်လျှင် အောက်ခြေ Keyboard ဆက်ပြရန်
+          const menuButtons = allCommands
+            .filter(c => c.command && c.command.trim() !== "/start")
+            .map(c => [{ text: c.command.trim() }]);
 
-            if (menuButtons.length > 0) {
-              replyPayload.reply_markup = {
-                keyboard: menuButtons,
-                resize_keyboard: true,
-                is_persistent: true
-              };
-            }
+          if (menuButtons.length > 0) {
+            replyPayload.reply_markup = {
+              keyboard: menuButtons,
+              resize_keyboard: true,
+              is_persistent: true
+            };
           }
 
           await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, replyPayload);
