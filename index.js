@@ -65,7 +65,7 @@ app.post('/api/add-command', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Invalid data fields provided' });
     }
 
-    // Database ထဲသို့ ထည့်သွင်းခြင်း
+    // Database ထဲသို့ သီးသန့် အချက်အလက်အဖြစ် ထည့်သွင်းခြင်း
     const { error } = await supabase.from('bot_commands').insert([{ 
       bot_token: bot_token, 
       command: finalCommand, 
@@ -100,7 +100,30 @@ app.get('/api/get-commands', async (req, res) => {
   }
 });
 
-// 5. Telegram Webhook (Menu Bar အောက်ခြေမှာ ပေါ်စေခြင်းနှင့် Reply ပို့ခြင်း)
+// 5. သီးသန့် ID ဖြင့် Menu/Command တစ်ခုချင်းစီကို တိကျစွာ ဖျက်ဆီးမည့် API (Delete Error 400/500 ကာကွယ်ရန်)
+app.delete('/api/delete-command/:id', async (req, res) => {
+  try {
+    const commandId = req.params.id;
+    
+    if (!commandId) {
+      return res.status(400).json({ success: false, error: 'Command ID is missing' });
+    }
+
+    // Supabase မှ သက်ဆိုင်ရာ id ဖြင့်သာ တိကျစွာ ဖျက်မည် (အကုန်မပါသွားစေရန်)
+    const { error } = await supabase
+      .from('bot_commands')
+      .delete()
+      .eq('id', commandId);
+
+    if (error) throw error;
+
+    res.json({ success: true, message: 'Deleted successfully!' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 6. Telegram Webhook (Menu Bar အောက်ခြေမှာ ပေါ်စေခြင်းနှင့် Reply ပို့ခြင်း)
 app.post('/api/webhook/:bot_token', async (req, res) => {
   try {
     const botToken = req.params.bot_token;
@@ -110,14 +133,12 @@ app.post('/api/webhook/:bot_token', async (req, res) => {
       const chatId = update.message.chat.id;
       const userText = update.message.text.trim();
 
-      // ဤ Bot အတွက် သိမ်းထားသမျှ Command/Menu များကို Supabase မှ ဆွဲထုတ်မည်
       const { data: allCommands, error: fetchError } = await supabase
         .from('bot_commands')
         .select('*')
         .eq('bot_token', botToken);
 
       if (!fetchError && allCommands) {
-        // User ရိုက်လိုက်သော စာသားနှင့် တိုက်ဆိုင်သော command ကို ရှာမည်
         const matchedCmd = allCommands.find(c => c.command === userText);
 
         if (matchedCmd) {
@@ -126,9 +147,7 @@ app.post('/api/webhook/:bot_token', async (req, res) => {
             text: matchedCmd.reply_text
           };
 
-          // အကယ်၍ User က /start ရိုက်လိုက်လျှင် (သို့) Bot ထဲဝင်လိုက်လျှင် အောက်ခြေ Menu Bar ပါ တစ်ခါတည်း ပူးတွဲပြမည်
           if (userText === "/start") {
-            // Database ထဲရှိ /start မှလွဲ၍ ကျန်သည့် Menu နာမည်များကို အောက်ခြေခလုတ်များအဖြစ် တည်ဆောက်မည်
             const menuButtons = allCommands
               .filter(c => c.command !== "/start")
               .map(c => [{ text: c.command }]);
