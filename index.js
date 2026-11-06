@@ -12,7 +12,7 @@ app.post('/api/add-bot', async (req, res) => {
   try {
     const { user_id, bot_name, bot_token } = req.body;
     if (!user_id || !bot_token) {
-      return res.status(400).json({ success: false, error: 'Missing fields: user_id or bot_token' });
+      return res.status(400).json({ success: false, error: 'Missing fields' });
     }
 
     const { error } = await supabase.from('bots').insert([{ user_id, bot_name, bot_token }]);
@@ -24,26 +24,23 @@ app.post('/api/add-bot', async (req, res) => {
   }
 });
 
-// 2. Bot စာရင်းများ ထုတ်ယူမည့် API (MainActivity အတွက် အရေးကြီးသည် - မူလက မပါဝင်ပါ)
+// 2. Bot စာရင်းများ ထုတ်ယူမည့် API
 app.get('/api/get-bots', async (req, res) => {
   try {
     const { user_id } = req.query;
-    
     let query = supabase.from('bots').select('*');
     if (user_id && user_id !== "default_user") {
       query = query.eq('user_id', user_id);
     }
-
     const { data, error } = await query;
     if (error) throw error;
-
     res.json({ success: true, bots: data });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 3. Command / Menu / Start များကို သိမ်းဆည်းမည့် API (Error 400 ကာကွယ်ရန်)
+// 3. Command / Menu / Start များကို သိမ်းဆည်းမည့် API
 app.post('/api/add-command', async (req, res) => {
   try {
     const { bot_token, start_welcome, menu_name, menu_reply, command, reply_text } = req.body;
@@ -55,7 +52,6 @@ app.post('/api/add-command', async (req, res) => {
     let finalCommand = "";
     let finalReply = "";
 
-    // /start သီးသန့် (သို့) Menu သီးသန့် ခွဲခြားလက်ခံခြင်း
     if (start_welcome && start_welcome.trim() !== "") {
       finalCommand = "/start";
       finalReply = start_welcome;
@@ -69,7 +65,7 @@ app.post('/api/add-command', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Invalid data fields provided' });
     }
 
-    // Supabase table ('bot_commands') ထဲသို့ ထည့်သွင်းခြင်း
+    // Database ထဲသို့ ထည့်သွင်းခြင်း
     const { error } = await supabase.from('bot_commands').insert([{ 
       bot_token: bot_token, 
       command: finalCommand, 
@@ -104,7 +100,7 @@ app.get('/api/get-commands', async (req, res) => {
   }
 });
 
-// 5. Telegram Webhook (Persistent Menu / Start စနစ်အတွက်)
+// 5. Telegram Webhook (Menu Bar အောက်ခြေမှာ ပေါ်စေခြင်းနှင့် Reply ပို့ခြင်း)
 app.post('/api/webhook/:bot_token', async (req, res) => {
   try {
     const botToken = req.params.bot_token;
@@ -114,20 +110,40 @@ app.post('/api/webhook/:bot_token', async (req, res) => {
       const chatId = update.message.chat.id;
       const userText = update.message.text.trim();
 
-      // User ရိုက်လိုက်သော (သို့) နှိပ်လိုက်သော စာသားနှင့် တိုက်ဆိုင်သော command/menu ကို ရှာမည်
-      const { data: commands, error } = await supabase
+      // ဤ Bot အတွက် သိမ်းထားသမျှ Command/Menu များကို Supabase မှ ဆွဲထုတ်မည်
+      const { data: allCommands, error: fetchError } = await supabase
         .from('bot_commands')
         .select('*')
-        .eq('bot_token', botToken)
-        .eq('command', userText);
+        .eq('bot_token', botToken);
 
-      if (!error && commands && commands.length > 0) {
-        const cmdData = commands[0];
-        const payload = {
-          chat_id: chatId,
-          text: cmdData.reply_text
-        };
-        await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, payload);
+      if (!fetchError && allCommands) {
+        // User ရိုက်လိုက်သော စာသားနှင့် တိုက်ဆိုင်သော command ကို ရှာမည်
+        const matchedCmd = allCommands.find(c => c.command === userText);
+
+        if (matchedCmd) {
+          let replyPayload = {
+            chat_id: chatId,
+            text: matchedCmd.reply_text
+          };
+
+          // အကယ်၍ User က /start ရိုက်လိုက်လျှင် (သို့) Bot ထဲဝင်လိုက်လျှင် အောက်ခြေ Menu Bar ပါ တစ်ခါတည်း ပူးတွဲပြမည်
+          if (userText === "/start") {
+            // Database ထဲရှိ /start မှလွဲ၍ ကျန်သည့် Menu နာမည်များကို အောက်ခြေခလုတ်များအဖြစ် တည်ဆောက်မည်
+            const menuButtons = allCommands
+              .filter(c => c.command !== "/start")
+              .map(c => [{ text: c.command }]);
+
+            if (menuButtons.length > 0) {
+              replyPayload.reply_markup = {
+                keyboard: menuButtons,
+                resize_keyboard: true,
+                is_persistent: true
+              };
+            }
+          }
+
+          await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, replyPayload);
+        }
       }
     }
 
