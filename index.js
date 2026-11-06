@@ -22,16 +22,23 @@ app.post('/api/add-bot', async (req, res) => {
   }
 });
 
-// 2. Command နှင့် Button များကို သိမ်းဆည်းမည့် API
+// 2. Command, Reply နှင့် Menu Bar (Reply Keyboard) များကို သိမ်းဆည်းမည့် API
 app.post('/api/add-command', async (req, res) => {
   try {
-    const { bot_token, command, reply_text, button_text, button_url } = req.body;
+    const { bot_token, command, reply_text, button_text, button_url, menu_keyboard } = req.body;
     if (!bot_token || !command || !reply_text) return res.status(400).json({ success: false, error: 'Missing fields' });
 
-    const { error } = await supabase.from('bot_commands').insert([{ bot_token, command, reply_text, button_text, button_url }]);
+    const { error } = await supabase.from('bot_commands').insert([{ 
+      bot_token, 
+      command, 
+      reply_text, 
+      button_text, 
+      button_url, 
+      menu_keyboard: menu_keyboard || "" 
+    }]);
     if (error) throw error;
 
-    res.json({ success: true, message: 'Command saved successfully!' });
+    res.json({ success: true, message: 'Command & Menu saved successfully!' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -73,7 +80,7 @@ app.delete('/api/delete-command', async (req, res) => {
     }
 });
 
-// 6. Telegram Webhook (User ထည့်ထားသည့် ခလုတ်များအတိုင်း Telegram တွင် ပေါ်စေရန်)
+// 6. Telegram Webhook (Dynamic Menu Bar & Inline Buttons များနှင့် အလုပ်လုပ်ရန်)
 app.post('/api/webhook/:bot_token', async (req, res) => {
   try {
     const botToken = req.params.bot_token;
@@ -83,6 +90,7 @@ app.post('/api/webhook/:bot_token', async (req, res) => {
       const chatId = update.message.chat.id;
       const userText = update.message.text.trim();
 
+      // Supabase ထဲမှ User ရိုက်ထည့်ထားသော command ကို ရှာမည်
       const { data: commands, error } = await supabase
         .from('bot_commands')
         .select('*')
@@ -97,23 +105,48 @@ app.post('/api/webhook/:bot_token', async (req, res) => {
           text: cmdData.reply_text
         };
 
-        // App ထဲတွင် User ထည့်ခဲ့သော button_text ကို ယူ၍ Telegram တွင် ခလုတ်အဖြစ် ဖန်တီးခြင်း
+        // အဆင့် (က) - Inline Keyboard (စာသားများကို , ဖြင့် ခွဲ၍ အကွက်လိုက် ဖန်တီးခြင်း)
+        let inlineRows = [];
         if (cmdData.button_text && cmdData.button_text.trim() !== "") {
-          // (","); ဖြင့် ခွဲ၍ ခလုတ်မျိုးစုံ (ဥပမာ - App Unlock, App Lock) ကို အကွက်လိုက် ဖန်တီးပေးခြင်း
           const btnTexts = cmdData.button_text.split(',');
-          let keyboardRows = [];
-          
           for (let i = 0; i < btnTexts.length; i += 2) {
             let row = [{ text: btnTexts[i].trim(), callback_data: "btn_" + i }];
             if (i + 1 < btnTexts.length) {
               row.push({ text: btnTexts[i + 1].trim(), callback_data: "btn_" + (i + 1) });
             }
-            keyboardRows.push(row);
+            inlineRows.push(row);
           }
+        }
 
-          payload.reply_markup = {
-            inline_keyboard: keyboardRows
-          };
+        // အဆင့် (ခ) - Menu Bar / Reply Keyboard (အောက်ခြေတွင် အမြဲပေါ်နေမည့် မီနူးဘားများ)
+        let replyKeyboardRows = [];
+        if (cmdData.menu_keyboard && cmdData.menu_keyboard.trim() !== "") {
+          const menuTexts = cmdData.menu_keyboard.split(',');
+          // တစ်ကြောင်းလျှင် ခလုတ် ၂ ခုစီ ဝင်အောင် စီစဉ်ခြင်း
+          for (let i = 0; i < menuTexts.length; i += 2) {
+            let row = [{ text: menuTexts[i].trim() }];
+            if (i + 1 < menuTexts.length) {
+              row.push({ text: menuTexts[i + 1].trim() });
+            }
+            replyKeyboardRows.push(row);
+          }
+        }
+
+        // Reply Markup ပေါင်းစပ်ခြင်း (Inline Keyboard နှင့် Reply Keyboard ကို တွဲသုံးခြင်း)
+        let replyMarkupObj = {};
+        
+        if (inlineRows.length > 0) {
+          replyMarkupObj.inline_keyboard = inlineRows;
+        }
+
+        if (replyKeyboardRows.length > 0) {
+          replyMarkupObj.keyboard = replyKeyboardRows;
+          replyMarkupObj.resize_keyboard = true;   // ခလုတ်အရွယ်အစားကို အသင့်အတင့်ဖြစ်စေရန်
+          replyMarkupObj.is_persistent = true;     // အောက်ခြေတွင် အမြဲပေါ်နေစေရန်
+        }
+
+        if (Object.keys(replyMarkupObj).length > 0) {
+          payload.reply_markup = replyMarkupObj;
         }
 
         await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, payload);
