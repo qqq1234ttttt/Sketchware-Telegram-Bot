@@ -40,7 +40,7 @@ app.get('/api/get-bots', async (req, res) => {
   }
 });
 
-// 3. Command / Menu / Start များကို သိမ်းဆည်းမည့် API (Space များကို .trim() ဖြင့် ဖြတ်ပေးမည်)
+// 3. Command / Menu / Start များကို သိမ်းဆည်းမည့် API
 app.post('/api/add-command', async (req, res) => {
   try {
     const { bot_token, start_welcome, menu_name, menu_reply } = req.body;
@@ -118,7 +118,7 @@ app.delete('/api/delete-command', async (req, res) => {
   }
 });
 
-// 6. Telegram Webhook (Menu Bar အောက်ခြေမှာ ပေါ်စေခြင်းနှင့် Reply ပို့ခြင်း)
+// 6. Telegram Webhook (Menu Bar အောက်ခြေမှာ မဖြစ်မနေ ပေါ်စေရန် ပြင်ဆင်ထားသော Webhook)
 app.post('/api/webhook/:bot_token', async (req, res) => {
   try {
     const botToken = req.params.bot_token;
@@ -128,36 +128,55 @@ app.post('/api/webhook/:bot_token', async (req, res) => {
       const chatId = update.message.chat.id;
       const userText = update.message.text.trim();
 
+      // Supabase မှ ဤ Bot Token နှင့်ဆိုင်သော Commands အားလုံးကို ဆွဲထုတ်မည်
       const { data: allCommands, error: fetchError } = await supabase
         .from('bot_commands')
         .select('*')
         .eq('bot_token', botToken);
 
-      if (!fetchError && allCommands) {
-        // Space ပါသွားသည်ကို ကာကွယ်ရန် .trim() ဖြင့် တိုက်စစ်မည်
+      if (!fetchError && allCommands && allCommands.length > 0) {
+        // User ပို့လိုက်သော စာသားနှင့် တိုက်ဆိုင်သော Command ကို ရှာမည်
         const matchedCmd = allCommands.find(c => c.command && c.command.trim().toLowerCase() === userText.toLowerCase());
 
-        if (matchedCmd) {
-          let replyPayload = {
-            chat_id: chatId,
-            text: matchedCmd.reply_text
-          };
+        // မက်ဆေ့ခ်ျ Reply ပို့ရန် Payload တည်ဆောက်ခြင်း
+        let replyText = matchedCmd ? matchedCmd.reply_text : "ရွေးချယ်စရာ Menu မရှိပါ။ /start ကို နှိပ်ပါ။";
 
-          // User က /start ပို့လျှင် သို့မဟုတ် Menu ထဲက ခလုတ်တစ်ခုခုကို နှိပ်လျှင် အောက်ခြေ Keyboard ဆက်ပြရန်
-          const menuButtons = allCommands
-            .filter(c => c.command && c.command.trim() !== "/start")
-            .map(c => [{ text: c.command.trim() }]);
+        let replyPayload = {
+          chat_id: chatId,
+          text: replyText
+        };
 
-          if (menuButtons.length > 0) {
-            replyPayload.reply_markup = {
-              keyboard: menuButtons,
-              resize_keyboard: true,
-              is_persistent: true
-            };
+        // Database ထဲတွင်ရှိသော /start မဟုတ်သည့် အခြား command အားလုံးကို အောက်ခြေ Menu utton များအဖြစ် ဖန်တီးမည်
+        const menuButtons = [];
+        let currentRow = [];
+
+        allCommands.forEach(c => {
+          if (c.command && c.command.trim() !== "/start") {
+            currentRow.push({ text: c.command.trim() });
+            // တစ်တန်းလျှင် ခလုတ် ၂ ခုစီ ထည့်မည် (သို့မဟုတ် လိုသလို ဖွဲ့စည်းနိုင်သည်)
+            if (currentRow.length === 2) {
+              menuButtons.push(currentRow);
+              currentRow = [];
+            }
           }
+        });
 
-          await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, replyPayload);
+        // ကျန်နေသေးသော ခလုတ်များရှိပါက ထပ်ထည့်မည်
+        if (currentRow.length > 0) {
+          menuButtons.push(currentRow);
         }
+
+        // Menu Buttons များ ရှိနေပါက reply_markup ထဲသို့ ထည့်သွင်းမည်
+        if (menuButtons.length > 0) {
+          replyPayload.reply_markup = {
+            keyboard: menuButtons,
+            resize_keyboard: true,
+            is_persistent: true
+          };
+        }
+
+        // Telegram သို့ API ဖြင့် မက်ဆေ့ခ်ျနှင့် Keyboard ပို့မည်
+        await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, replyPayload);
       }
     }
 
