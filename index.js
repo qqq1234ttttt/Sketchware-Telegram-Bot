@@ -40,7 +40,7 @@ app.get('/api/get-bots', async (req, res) => {
   }
 });
 
-// 3. Command / Menu / Start များကို သိမ်းဆည်းမည့် API (App ဘက်မှ ပို့လာသော ပုံစံအတိုင်း တိကျစွာ လက်ခံမည်)
+// 3. Command / Menu / Start များကို သိမ်းဆည်းမည့် API
 app.post('/api/add-command', async (req, res) => {
   try {
     const { bot_token, start_welcome, menu_name, menu_reply } = req.body;
@@ -51,9 +51,7 @@ app.post('/api/add-command', async (req, res) => {
 
     const token = bot_token.trim();
 
-    // အကယ်၍ /start (Welcome Message) ထည့်သွင်းလာပါက သိမ်းဆည်းမည် (သို့မဟုတ် Update လုပ်မည်)
     if (start_welcome && start_welcome.trim() !== "") {
-      // ရှိပြီးသား /start ကို ရှာမည်
       const { data: existingStart } = await supabase
         .from('bot_commands')
         .select('id')
@@ -75,7 +73,6 @@ app.post('/api/add-command', async (req, res) => {
       }
     }
 
-    // အကယ်၍ Menu အသစ် (Menu Name & Reply) ထည့်သွင်းလာပါက သိမ်းဆည်းမည်
     if (menu_name && menu_name.trim() !== "" && menu_reply && menu_reply.trim() !== "") {
       const mName = menu_name.trim();
       const mReply = menu_reply.trim();
@@ -146,7 +143,32 @@ app.delete('/api/delete-command', async (req, res) => {
   }
 });
 
-// 6. Telegram Webhook (Menu Bar အောက်ခြေမှာ မဖြစ်မနေ ပေါ်စေရန် အာမခံသော Webhook)
+// 6. Command / Menu ကို ID ဖြင့် တိကျစွာ ပြင်ဆင်မည့် (Edit/Update) API - 🆕 အသစ်ထည့်သွင်းပေးထားသည်
+app.put('/api/update-command', async (req, res) => {
+  try {
+    const { id, command, reply_text } = req.body;
+    
+    if (!id || !command || !reply_text) {
+      return res.status(400).json({ success: false, error: 'Missing required fields' });
+    }
+
+    const { error } = await supabase
+      .from('bot_commands')
+      .update({ 
+        command: command.trim(), 
+        reply_text: reply_text.trim() 
+      })
+      .eq('id', id);
+
+    if (error) throw error;
+
+    res.json({ success: true, message: 'Command updated successfully!' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 7. Telegram Webhook (Menu Bar အောက်ခြေမှာ မဖြစ်မနေ ပေါ်စေရန်)
 app.post('/api/webhook/:bot_token', async (req, res) => {
   try {
     const botToken = req.params.bot_token;
@@ -156,14 +178,12 @@ app.post('/api/webhook/:bot_token', async (req, res) => {
       const chatId = update.message.chat.id;
       const userText = update.message.text.trim();
 
-      // Supabase မှ ဤ Bot Token နှင့်ဆိုင်သော Commands အားလုံးကို ဆွဲထုတ်မည်
       const { data: allCommands, error: fetchError } = await supabase
         .from('bot_commands')
         .select('*')
         .eq('bot_token', botToken);
 
       if (!fetchError && allCommands && allCommands.length > 0) {
-        // User ပို့လိုက်သော စာသားနှင့် ကိုက်ညီသော Command ကို ရှာမည်
         const matchedCmd = allCommands.find(c => c.command && c.command.trim().toLowerCase() === userText.toLowerCase());
 
         let replyText = "မင်္ဂလာပါ! ကျေးဇူးပြု၍ အောက်ပါ Menu များကို ရွေးချယ်ပါ။";
@@ -182,7 +202,6 @@ app.post('/api/webhook/:bot_token', async (req, res) => {
           text: replyText
         };
 
-        // Database ထဲတွင်ရှိသော /start မဟုတ်သည့် အခြား Menu ခလုတ်အားလုံးကို အောက်ခြေ Keyboard အဖြစ် တည်ဆောက်မည်
         const menuButtons = [];
         let currentRow = [];
 
@@ -192,7 +211,7 @@ app.post('/api/webhook/:bot_token', async (req, res) => {
             const exists = menuButtons.some(row => row.some(b => b.text === btnName));
             if (!exists) {
               currentRow.push({ text: btnName });
-              if (currentRow.length === 2) { // တစ်တန်းလျှင် ခလုတ် ၂ ခုစီပြမည်
+              if (currentRow.length === 2) {
                 menuButtons.push(currentRow);
                 currentRow = [];
               }
@@ -204,7 +223,6 @@ app.post('/api/webhook/:bot_token', async (req, res) => {
           menuButtons.push(currentRow);
         }
 
-        // မည်သည့်စာသား ပို့သည်ဖြစ်စေ အောက်ခြေတွင် Menu Bar အမြဲပေါ်နေစေရန် ထည့်သွင်းမည်
         if (menuButtons.length > 0) {
           replyPayload.reply_markup = {
             keyboard: menuButtons,
