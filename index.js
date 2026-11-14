@@ -17,6 +17,11 @@ const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY =
     process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
+const PUBLIC_BASE_URL = (
+    process.env.PUBLIC_BASE_URL ||
+    'https://sketchware-telegram-bot.onrender.com'
+).replace(/\/+$/, '');
+
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     throw new Error('Supabase environment variables are missing');
 }
@@ -148,14 +153,35 @@ async function telegramRequest(botToken, method, data = {}) {
     });
 
     if (!response.data || !response.data.ok) {
-        throw new Error('Telegram API request failed');
+        throw new Error(
+            response.data?.description || 'Telegram API request failed'
+        );
     }
 
     return response.data.result;
 }
 
 /* ========================================
-   6. CHECK BOT OWNERSHIP
+   6. SET WEBHOOK AUTOMATICALLY
+======================================== */
+
+async function setBotWebhook(botToken) {
+    const webhookUrl =
+        `${PUBLIC_BASE_URL}/api/webhook/${botToken}`;
+
+    const result = await telegramRequest(
+        botToken,
+        'setWebhook',
+        {
+            url: webhookUrl
+        }
+    );
+
+    return result;
+}
+
+/* ========================================
+   7. CHECK BOT OWNERSHIP
 ======================================== */
 
 async function getOwnedBot(botToken, installationId) {
@@ -174,7 +200,8 @@ async function getOwnedBot(botToken, installationId) {
 }
 
 /* ========================================
-   7. ADD BOT / RECONNECT BOT
+   8. ADD BOT / RECONNECT BOT
+   AUTO WEBHOOK INCLUDED
 ======================================== */
 
 app.post(
@@ -185,8 +212,8 @@ app.post(
             const botName = String(req.body.bot_name || '').trim();
             const botToken = String(req.body.bot_token || '').trim();
 
-            if (!botName || !botToken) {
-                return sendError(res, 400, 'Bot name and token required');
+            if (!botToken) {
+                return sendError(res, 400, 'Bot token required');
             }
 
             // Verify token with Telegram
@@ -196,7 +223,10 @@ app.post(
             );
 
             const finalBotName =
-                botName || telegramBot.username || 'Telegram Bot';
+                botName ||
+                telegramBot.username ||
+                telegramBot.first_name ||
+                'Telegram Bot';
 
             // Check existing bot
             const { data: existingBot, error: findError } =
@@ -211,7 +241,10 @@ app.post(
                 return sendError(res, 500, 'Database error');
             }
 
+            let savedBot = false;
+
             if (existingBot) {
+
                 // Reassign existing bot to this installation
                 const { error: updateError } = await supabase
                     .from('bots')
@@ -226,42 +259,76 @@ app.post(
                     return sendError(res, 500, 'Bot reconnect failed');
                 }
 
-                return res.json({
-                    success: true,
-                    message: 'Existing bot reconnected',
-                    bot_name: finalBotName
-                });
+                savedBot = true;
+
+            } else {
+
+                // Insert new bot
+                const { error: insertError } = await supabase
+                    .from('bots')
+                    .insert({
+                        user_id: req.installationId,
+                        bot_name: finalBotName,
+                        bot_token: botToken
+                    });
+
+                if (insertError) {
+                    console.error('Bot insert error:', insertError.message);
+                    return sendError(res, 500, 'Bot add failed');
+                }
+
+                savedBot = true;
             }
 
-            // Insert new bot
-            const { error: insertError } = await supabase
-                .from('bots')
-                .insert({
-                    user_id: req.installationId,
-                    bot_name: finalBotName,
-                    bot_token: botToken
-                });
+            // Automatically connect Telegram webhook
+            if (savedBot) {
+                try {
+                    await setBotWebhook(botToken);
 
-            if (insertError) {
-                console.error('Bot insert error:', insertError.message);
-                return sendError(res, 500, 'Bot add failed');
+                    console.log(
+                        'Webhook connected for bot:',
+                        telegramBot.username || 'Bot'
+                    );
+
+                } catch (webhookError) {
+                    console.error(
+                        'Webhook setup error:',
+                        webhookError.message
+                    );
+
+                    return res.status(502).json({
+                        success: false,
+                        bot_saved: true,
+                        webhook_connected: false,
+                        message: 'Bot saved but webhook connection failed'
+                    });
+                }
             }
 
             return res.json({
                 success: true,
-                message: 'Bot added successfully',
+                bot_saved: true,
+                webhook_connected: true,
+                message: existingBot
+                    ? 'Existing bot reconnected and webhook connected'
+                    : 'Bot added and webhook connected',
                 bot_name: finalBotName
             });
 
         } catch (error) {
             console.error('Add bot error:', error.message);
-            return sendError(res, 400, 'Invalid bot token or Telegram error');
+
+            return sendError(
+                res,
+                400,
+                'Invalid bot token or Telegram error'
+            );
         }
     }
 );
 
 /* ========================================
-   8. GET MY BOTS
+   9. GET MY BOTS
 ======================================== */
 
 app.get(
@@ -293,7 +360,7 @@ app.get(
 );
 
 /* ========================================
-   9. SAVE ONE COMMAND
+   10. SAVE ONE COMMAND
 ======================================== */
 
 async function saveCommand(botToken, command, replyText) {
@@ -350,7 +417,7 @@ async function saveCommand(botToken, command, replyText) {
 }
 
 /* ========================================
-   10. ADD COMMAND
+   11. ADD COMMAND
 ======================================== */
 
 app.post(
@@ -373,7 +440,7 @@ app.post(
                 return sendError(res, 403, 'Bot not found or not owned');
             }
 
-            // Current Android format:
+            // Current Android format
             // { bot_token, command, reply_text }
 
             if (
@@ -392,7 +459,7 @@ app.post(
                 });
             }
 
-            // Legacy format:
+            // Legacy format
             // { start_welcome, menu_name, menu_reply }
 
             const startWelcome = req.body.start_welcome;
@@ -432,7 +499,7 @@ app.post(
 );
 
 /* ========================================
-   11. GET COMMANDS
+   12. GET COMMANDS
 ======================================== */
 
 app.get(
@@ -479,7 +546,7 @@ app.get(
 );
 
 /* ========================================
-   12. DELETE COMMAND
+   13. DELETE COMMAND
 ======================================== */
 
 app.delete(
@@ -532,7 +599,7 @@ app.delete(
 );
 
 /* ========================================
-   13. UPDATE COMMAND
+   14. UPDATE COMMAND
 ======================================== */
 
 app.put(
@@ -598,7 +665,7 @@ app.put(
 );
 
 /* ========================================
-   14. TELEGRAM WEBHOOK
+   15. TELEGRAM WEBHOOK
 ======================================== */
 
 app.post(
@@ -617,8 +684,7 @@ app.post(
             }
 
             /* ========================================
-               14A. CALLBACK QUERY
-               Inline Button ကိုနှိပ်တဲ့အခါ
+               15A. CALLBACK QUERY
             ======================================== */
 
             if (update.callback_query) {
@@ -684,7 +750,7 @@ app.post(
             }
 
             /* ========================================
-               14B. NORMAL MESSAGE
+               15B. NORMAL MESSAGE
             ======================================== */
 
             if (!update.message || !update.message.text) {
@@ -699,7 +765,6 @@ app.post(
                 return;
             }
 
-            // /start or /start payload
             const isStart =
                 incomingText === '/start' ||
                 incomingText.startsWith('/start ');
@@ -734,13 +799,10 @@ app.post(
 
                 const keyboard = [];
 
-                for (let i = 0; i < menuCommands.length; i++) {
-                    const item = menuCommands[i];
-
-                    // Button text is exactly the saved command.
-                    // Do not remove slash or change the Menu Name.
+                for (const item of menuCommands) {
                     keyboard.push([
                         {
+                            // Display exactly as stored in command column
                             text: item.command,
                             callback_data: item.command
                         }
@@ -772,7 +834,7 @@ app.post(
             }
 
             /* ========================================
-               14C. NORMAL COMMAND MATCH
+               15C. NORMAL COMMAND MATCH
             ======================================== */
 
             const { data: matchedCommand, error } = await supabase
@@ -809,7 +871,7 @@ app.post(
 );
 
 /* ========================================
-   15. HEALTH CHECK
+   16. HEALTH CHECK
 ======================================== */
 
 app.get('/health', (req, res) => {
@@ -824,7 +886,7 @@ app.get('/', (req, res) => {
 });
 
 /* ========================================
-   16. GLOBAL ERROR HANDLER
+   17. GLOBAL ERROR HANDLER
 ======================================== */
 
 app.use((error, req, res, next) => {
@@ -841,7 +903,7 @@ app.use((error, req, res, next) => {
 });
 
 /* ========================================
-   17. START SERVER
+   18. START SERVER
 ======================================== */
 
 app.listen(PORT, () => {
