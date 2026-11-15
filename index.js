@@ -803,8 +803,7 @@ app.post(
                     keyboard.push([
                         {
                             // Display exactly as stored in command column
-                            text: item.command,
-                            callback_data: item.command
+                            text: item.command
                         }
                     ]);
                 }
@@ -820,7 +819,8 @@ app.post(
 
                 if (keyboard.length > 0) {
                     sendData.reply_markup = {
-                        inline_keyboard: keyboard
+                        keyboard: keyboard,
+                        resize_keyboard: true
                     };
                 }
 
@@ -832,7 +832,6 @@ app.post(
 
                 return;
             }
-
             /* ========================================
                15C. NORMAL COMMAND MATCH
             ======================================== */
