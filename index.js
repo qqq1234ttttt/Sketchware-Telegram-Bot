@@ -799,13 +799,20 @@ app.post(
 
                 const keyboard = [];
 
-                for (const item of menuCommands) {
-                    keyboard.push([
+                for (let i = 0; i < menuCommands.length; i += 2) {
+                    const row = [
                         {
-                            // Display exactly as stored in command column
-                            text: item.command
+                            text: menuCommands[i].command
                         }
-                    ]);
+                    ];
+
+                    if (menuCommands[i + 1]) {
+                        row.push({
+                            text: menuCommands[i + 1].command
+                        });
+                    }
+
+                    keyboard.push(row);
                 }
 
                 const replyText = startCommand
